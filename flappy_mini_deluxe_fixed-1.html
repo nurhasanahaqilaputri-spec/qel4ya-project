@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Flappy Mini Deluxe</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#70c5ce}
+*{box-sizing:border-box;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+body{touch-action:none;font-family:Arial,sans-serif}
+#game{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+#fallback,#rotate,#over{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;z-index:5}
+#fallback{background:linear-gradient(#70c5ce,#b9edf0);color:#4a3522}
+.card{width:min(88vw,390px);padding:28px 20px;border-radius:24px;background:#fff8df;box-shadow:0 7px 0 rgba(90,65,25,.2)}
+h1{margin:0 0 16px;font-size:34px}
+p{margin:10px 0;font-size:19px;font-weight:700}
+.tap{margin-top:20px;font-size:20px;color:#d88920}
+#rotate{display:none;background:#17323a;color:white;font-size:24px;font-weight:800;padding:30px}
+#over{display:none;background:rgba(0,0,0,.25)}
+#over .card{padding-bottom:100px;position:relative}
+#again{position:absolute;left:10%;width:80%;bottom:22px;height:58px;border:0;border-radius:15px;background:#f4b942;font-size:21px;font-weight:900;color:#3b2813;box-shadow:0 5px #b87c18}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- Tampilan ini sengaja ada di HTML, jadi tidak blank walaupun browser lambat menjalankan JS. -->
+<div id="fallback"><div class="card"><h1>🐦 FLAPPY MINI</h1><p>Tap untuk terbang</p><p>Lewati pipa dan kumpulkan koin 🪙</p><div class="tap">TAP DI MANA SAJA</div></div></div>
+<div id="rotate"><div>📱↻<br><br>Putar HP kembali ke posisi potret</div></div>
+<div id="over"><div class="card"><h1>GAME OVER</h1><p>Skor: <b id="finalScore">0</b></p><p>Best: <b id="finalBest">0</b></p><p id="medal" style="font-size:45px">—</p><button id="again">MAIN LAGI</button></div></div>
+
+<script>
+(function(){
+"use strict";
+var canvas=document.getElementById("game"),ctx=canvas.getContext("2d");
+var fallback=document.getElementById("fallback"),rotate=document.getElementById("rotate"),over=document.getElementById("over");
+var again=document.getElementById("again"),finalScore=document.getElementById("finalScore"),finalBest=document.getElementById("finalBest"),medal=document.getElementById("medal");
+var W=0,H=0,dpr=1,state="start",score=0,best=0,last=0,spawn=0,groundX=0,overAt=0,lastTap=0;
+var bird={x:0,y:0,vy:0,rot:0,wing:0},pipes=[],coins=[],clouds=[];
+var GRAV=1450,FLAP=-445,SPEED=205,PIPE_W=68,GAP=174;
+
+try{best=Number(localStorage.getItem("flappyMiniBest")||0)}catch(e){best=0}
+
+function resize(){
+ W=window.innerWidth; H=window.innerHeight;
+ dpr=Math.min(window.devicePixelRatio||1,3);
+ canvas.width=Math.max(1,Math.floor(W*dpr));
+ canvas.height=Math.max(1,Math.floor(H*dpr));
+ canvas.style.width=W+"px";canvas.style.height=H+"px";
+ ctx.setTransform(dpr,0,0,dpr,0,0);
+ if(W>H){rotate.style.display="flex";state="rotate"}else{
+  rotate.style.display="none";
+  if(state==="rotate"){state="start";fallback.style.display="flex"}
+ }
+}
+window.addEventListener("resize",resize);
+window.addEventListener("orientationchange",function(){setTimeout(resize,100)});
+
+function reset(){
+ score=0;pipes=[];coins=[];spawn=.35;groundX=0;
+ bird={x:W*.29,y:H*.43,vy:0,rot:0,wing:0};
+ clouds=[];
+ for(var i=0;i<6;i++) clouds.push({x:i*W/5+Math.random()*80,y:50+Math.random()*H*.3,s:.55+Math.random()*.6,v:8+Math.random()*10});
+ state="playing";fallback.style.display="none";over.style.display="none";
+}
+function start(){
+ if(state==="start"){reset();flap(true)}
+}
+function flap(first){
+ var now=performance.now();
+ if(!first&&now-lastTap<90)return;
+ lastTap=now;
+ if(state==="start"){reset()}
+ if(state!=="playing")return;
+ bird.vy=FLAP;bird.wing=1;
+ beep(650,390,.09);
+}
+function touch(e){
+ e.preventDefault();
+ if(e.touches&&e.touches.length>1)return;
+ if(state==="start")start();else flap(false);
+}
+canvas.addEventListener("touchstart",touch,{passive:false});
+fallback.addEventListener("touchstart",function(e){e.preventDefault();start()},{passive:false});
+again.addEventListener("touchstart",function(e){
+ e.preventDefault();e.stopPropagation();
+ if(performance.now()-overAt>=500){reset();flap(false)}
+},{passive:false});
+
+function beep(a,b,d){
+ try{
+  var AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
+  if(!beep.ac)beep.ac=new AC();
+  var ac=beep.ac;
+  if(ac.state==="suspended")ac.resume();
+  var o=ac.createOscillator(),g=ac.createGain(),t=ac.currentTime;
+  o.connect(g);g.connect(ac.destination);o.frequency.setValueAtTime(a,t);o.frequency.exponentialRampToValueAtTime(b,t+d);
+  g.gain.setValueAtTime(.045,t);g.gain.exponentialRampToValueAtTime(.001,t+d);
+  o.start(t);o.stop(t+d+.02);
+ }catch(e){}
+}
+function coinSound(){beep(880,1320,.16)}
+
+function addPipe(){
+ var gap=Math.min(GAP,H*.30), topMin=H*.12, topMax=Math.max(topMin,H-H*.14-gap-60);
+ var gy=topMin+Math.random()*(topMax-topMin);
+ var p={x:W+25,gapY:gy,gap:gap,scored:false};pipes.push(p);
+ if(Math.random()<.8)coins.push({x:p.x+PIPE_W/2,y:gy+gap/2,r:10,taken:false,a:0});
+}
+function hitRect(cx,cy,r,rx,ry,rw,rh){
+ var qx=Math.max(rx,Math.min(cx,rx+rw)),qy=Math.max(ry,Math.min(cy,ry+rh));
+ var dx=cx-qx,dy=cy-qy;return dx*dx+dy*dy<r*r;
+}
+function crash(){
+ if(state!=="playing")return;
+ state="gameover";overAt=performance.now();
+ if(score>best){best=score;try{localStorage.setItem("flappyMiniBest",String(best))}catch(e){}}
+ finalScore.textContent=score;finalBest.textContent=best;
+ medal.textContent=score>=30?"🥇":score>=15?"🥈":score>=5?"🥉":"—";
+ over.style.display="flex";beep(180,55,.25);
+ if(navigator.vibrate)navigator.vibrate([70,40,100]);
+}
+function update(dt){
+ if(state!=="playing")return;
+ bird.vy+=GRAV*dt;bird.y+=bird.vy*dt;bird.rot=Math.max(-.55,Math.min(1.3,bird.vy/650));
+ bird.wing*=Math.pow(.02,dt);
+ spawn+=dt;
+ if(spawn>=1.48){spawn-=1.48;addPipe()}
+ groundX=(groundX-SPEED*dt)%40;
+ for(var i=0;i<clouds.length;i++){clouds[i].x-=clouds[i].v*dt;if(clouds[i].x<-120)clouds[i].x=W+80}
+ for(var j=0;j<pipes.length;j++){
+  var p=pipes[j];p.x-=SPEED*dt;
+  if(!p.scored&&p.x+PIPE_W<bird.x){p.scored=true;score++;coinSound()}
+  if(hitRect(bird.x,bird.y,17,p.x,0,PIPE_W,p.gapY)||hitRect(bird.x,bird.y,17,p.x,p.gapY+p.gap,PIPE_W,H-(p.gapY+p.gap)))crash();
+ }
+ for(var k=0;k<coins.length;k++){
+  var q=coins[k];q.x-=SPEED*dt;q.a+=dt*8;
+  if(!q.taken&&Math.hypot(bird.x-q.x,bird.y-q.y)<27){q.taken=true;score++;coinSound();if(navigator.vibrate)navigator.vibrate(18)}
+ }
+ pipes=pipes.filter(function(p){return p.x>-100});
+ coins=coins.filter(function(q){return q.x>-40&&!q.taken});
+ if(bird.y-17<=0||bird.y+17>=H-55)crash();
+}
+function cloud(q){
+ ctx.save();ctx.globalAlpha=.5;ctx.fillStyle="#fff";ctx.beginPath();
+ ctx.arc(q.x,q.y,20*q.s,0,Math.PI*2);ctx.arc(q.x+24*q.s,q.y-10*q.s,27*q.s,0,Math.PI*2);ctx.arc(q.x+51*q.s,q.y,19*q.s,0,Math.PI*2);ctx.fill();ctx.restore();
+}
+function pipe(p){
+ ctx.fillStyle="#55b84a";ctx.strokeStyle="#2e7930";ctx.lineWidth=3;
+ ctx.fillRect(p.x,0,PIPE_W,p.gapY);ctx.strokeRect(p.x,0,PIPE_W,p.gapY);
+ ctx.fillRect(p.x-5,p.gapY-18,PIPE_W+10,18);ctx.strokeRect(p.x-5,p.gapY-18,PIPE_W+10,18);
+ var y=p.gapY+p.gap;ctx.fillRect(p.x,y,PIPE_W,H-y);ctx.strokeRect(p.x,y,PIPE_W,H-y);
+ ctx.fillRect(p.x-5,y,PIPE_W+10,18);ctx.strokeRect(p.x-5,y,PIPE_W+10,18);
+ ctx.fillStyle="rgba(255,255,255,.18)";ctx.fillRect(p.x+8,0,8,Math.max(0,p.gapY-18));ctx.fillRect(p.x+8,y+18,8,Math.max(0,H-y-18));
+}
+function coin(q){
+ ctx.save();ctx.translate(q.x,q.y);ctx.scale(.72+.28*Math.abs(Math.cos(q.a)),1);
+ ctx.fillStyle="#ffd84d";ctx.strokeStyle="#b47b13";ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,10,0,Math.PI*2);ctx.fill();ctx.stroke();
+ ctx.fillStyle="#fff0a0";ctx.font="bold 11px Arial";ctx.textAlign="center";ctx.fillText("★",0,4);ctx.restore();
+}
+function birdDraw(){
+ ctx.save();ctx.translate(bird.x,bird.y);ctx.rotate(bird.rot);
+ ctx.fillStyle="#ffd84b";ctx.strokeStyle="#8e6815";ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,17,0,Math.PI*2);ctx.fill();ctx.stroke();
+ var wing=Math.sin(performance.now()/65)*.38*(.25+.75*bird.wing);
+ ctx.save();ctx.translate(-5,5);ctx.rotate(-.2+wing);ctx.fillStyle="#efa537";ctx.beginPath();ctx.ellipse(0,0,11,6,0,0,Math.PI*2);ctx.fill();ctx.restore();
+ ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(7,-7,6,0,Math.PI*2);ctx.fill();ctx.fillStyle="#222";ctx.beginPath();ctx.arc(9,-7,2.5,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#ee8b2b";ctx.beginPath();ctx.moveTo(13,-2);ctx.lineTo(29,4);ctx.lineTo(13,8);ctx.closePath();ctx.fill();
+ ctx.restore();
+}
+function groundDraw(){
+ var y=H-55;ctx.fillStyle="#ded06a";ctx.fillRect(0,y,W,55);ctx.fillStyle="#83c64a";ctx.fillRect(0,y,W,10);
+ ctx.strokeStyle="#63983a";ctx.lineWidth=2;
+ for(var z=groundX-40;z<W+40;z+=40){ctx.beginPath();ctx.moveTo(z,y+10);ctx.lineTo(z+18,y+55);ctx.stroke()}
+}
+function scoreDraw(){
+ if(state!=="playing")return;
+ ctx.textAlign="center";ctx.font="900 48px Arial";ctx.lineWidth=5;ctx.strokeStyle="rgba(0,0,0,.25)";ctx.strokeText(score,W/2,68);ctx.fillStyle="#fff";ctx.fillText(score,W/2,68);
+}
+function draw(){
+ var sky=ctx.createLinearGradient(0,0,0,H);sky.addColorStop(0,"#70c5ce");sky.addColorStop(1,"#b9edf0");
+ ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+ for(var i=0;i<clouds.length;i++)cloud(clouds[i]);
+ for(var j=0;j<pipes.length;j++)pipe(pipes[j]);
+ for(var k=0;k<coins.length;k++)coin(coins[k]);
+ birdDraw();groundDraw();scoreDraw();
+}
+function loop(t){
+ if(!last)last=t;
+ var dt=Math.min((t-last)/1000,.035);last=t;
+ update(dt);draw();requestAnimationFrame(loop);
+}
+resize();
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
